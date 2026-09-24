@@ -1,0 +1,25 @@
+{
+  "features": [
+    "length",
+    "diameter",
+    "height",
+    "whole_weight",
+    "shucked_weight",
+    "viscera_weight",
+    "shell_weight",
+    "sex_F",
+    "sex_I",
+    "sex_M"
+  ],
+  "input_dim": 10,
+  "best_arch": "nn_v2_deeper",
+  "models": [
+    "baseline_mean",
+    "linear",
+    "nn_v1_2layers",
+    "nn_v2_deeper",
+    "nn_v2_deeper_lr0.01",
+    "nn_v2_deeper_sgd",
+    "nn_v2_deeper_epochs1500"
+  ]
+}
