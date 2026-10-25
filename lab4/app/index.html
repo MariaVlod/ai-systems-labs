@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Картки з нотаток</title>
+<link rel="stylesheet" href="style.css">
+<!-- Запуск: див. README.md. Відкривайте через http://localhost:8000, а не з диска. -->
+</head>
+<body>
+<main>
+  <h1>Картки з нотаток</h1>
+  <p class="hint">Вставте нотатки з пари — локальна модель зробить картки «питання — відповідь» для повторення.</p>
+
+  <details class="settings">
+    <summary>Налаштування</summary>
+    <div class="grid">
+      <label>Адреса API <input id="baseUrl" value="http://localhost:11434/v1"></label>
+      <label>Модель <input id="model" value="qwen3:30b-a3b-instruct-2507-q4_K_M"></label>
+      <label>Temperature <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.3"></label>
+      <label>Макс. токенів відповіді <input id="maxTokens" type="number" min="100" step="100" value="1500"></label>
+      <label>Таймаут, с <input id="timeoutS" type="number" min="10" value="300"></label>
+      <label class="check"><input id="noThinking" type="checkbox"> Вимкнути міркування (qwen3 hybrid)</label>
+    </div>
+  </details>
+
+  <label for="notes">Нотатки <span id="counter" class="hint"></span></label>
+  <textarea id="notes" rows="10" placeholder="Вставте конспект…"></textarea>
+  <div class="row">
+    <label>Карток <select id="count"><option>3</option><option selected>5</option><option>8</option><option>10</option></select></label>
+    <button id="run">Згенерувати</button>
+    <button id="stop" class="secondary" disabled>Зупинити</button>
+    <button id="export" class="secondary" disabled>Експорт для Anki (.tsv)</button>
+  </div>
+  <div id="status" class="hint" role="status"></div>
+  <div id="error" class="error" role="alert" hidden></div>
+  <div id="cards"></div>
+</main>
+<script type="module">
+import { MAX_NOTES_CHARS, AppError, generateCards, parseCards, toTsv } from "./app.js";
+
+const $ = (id) => document.getElementById(id);
+let cards = [], controller = null;
+
+function updateCounter() {
+  const n = $("notes").value.length;
+  $("counter").textContent = `${n} / ${MAX_NOTES_CHARS} символів`;
+  $("counter").classList.toggle("over", n > MAX_NOTES_CHARS);
+}
+$("notes").addEventListener("input", updateCounter);
+updateCounter();
+
+function showError(message) {
+  $("error").textContent = message;
+  $("error").hidden = !message;
+}
+
+function render() {
+  $("cards").replaceChildren(...cards.map((card, i) => {
+    const el = document.createElement("div");
+    el.className = "card";
+    el.tabIndex = 0;
+    el.innerHTML = '<div class="q"></div><div class="a" hidden></div><div class="hint">клікніть, щоб побачити відповідь</div>';
+    el.querySelector(".q").textContent = `${i + 1}. ${card.question}`;
+    el.querySelector(".a").textContent = card.answer;
+    const flip = () => {
+      const a = el.querySelector(".a");
+      a.hidden = !a.hidden;
+    };
+    el.addEventListener("click", flip);
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); } });
+    return el;
+  }));
+  $("export").disabled = !cards.length;
+}
+
+$("run").addEventListener("click", async () => {
+  const notes = $("notes").value.trim();
+  showError("");
+  $("status").textContent = "";
+  if (!notes) return showError("Вставте нотатки.");
+  if (notes.length > MAX_NOTES_CHARS) return showError(`Нотаток забагато: ${notes.length} символів, максимум ${MAX_NOTES_CHARS}. Скоротіть текст.`);
+
+  const cfg = {
+    baseUrl: $("baseUrl").value.trim(), model: $("model").value.trim(),
+    temperature: Number($("temperature").value), maxTokens: Number($("maxTokens").value),
+    timeoutS: Number($("timeoutS").value) || 300, noThinking: $("noThinking").checked,
+  };
+  controller = new AbortController();
+  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(cfg.timeoutS * 1000)]);
+  $("run").disabled = true; $("stop").disabled = false;
+  const started = performance.now();
+  $("status").textContent = "Чекаю на модель (перший запит може тривати довше: модель завантажується в памʼять)…";
+  try {
+    const { text, finishReason } = await generateCards(cfg, notes, Number($("count").value),
+      (chars) => { $("status").textContent = `Модель генерує… отримано ${chars} символів`; }, signal);
+    if (finishReason === "length") showError("Відповідь обрізано через ліміт токенів — спробуйте менше карток або збільште ліміт.");
+    cards = parseCards(text);
+    $("status").textContent = `Готово: ${cards.length} карток за ${((performance.now() - started) / 1000).toFixed(1)} с.`;
+  } catch (error) {
+    cards = [];
+    $("status").textContent = "";
+    showError(error instanceof AppError ? error.message : `Неочікувана помилка: ${error.message}`);
+  }
+  render();
+  $("run").disabled = false; $("stop").disabled = true;
+});
+
+$("stop").addEventListener("click", () => controller?.abort());
+
+$("export").addEventListener("click", () => {
+  const link = Object.assign(document.createElement("a"), {
+    href: URL.createObjectURL(new Blob([toTsv(cards)], { type: "text/tab-separated-values" })),
+    download: "cards.tsv",
+  });
+  link.click();
+});
+</script>
+</body>
+</html>
